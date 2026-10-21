@@ -842,9 +842,9 @@ class TilePattern{
 
 // ===== GridPalette (16x16、四隅バイリニア) =====
 // 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
-// 色は行列の小さい値から 右下→右上→左下→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
+// 色は行列の小さい値から 右下→左下→右上→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
 // 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ
-const GRID_ORDER=["BR","TR","BL","TL"];
+const GRID_ORDER=["BR","BL","TR","TL"];
 class GridPalette{
   constructor(spec=RES[RES_DEFAULT].dither){
     this.GRID_SIZE=16; this.spec=spec;
