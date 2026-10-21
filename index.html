@@ -30,8 +30,16 @@ SOFTWARE.
 このアプリで描いた絵の権利は、描いた人のものです。 Pictures you draw with this app belong to you.
 -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Retro Pixel Paint</title>
-<meta name="description" content="Retro Pixel Paint: ブラウザだけで動く、レトロPC風のドット絵ペイント（8色・16色、表画面と裏画面、線画レイヤー）。ネットワークには接続しません。">
+<title>Retro Pixel Paint｜PC-8801・PC-9801風ドット絵ペイント</title>
+<meta name="description" content="PC-8801・PC-9801・X1・FM-7などの昔のパソコン風のドット絵が描ける、ブラウザで動くペイントツール。640×200の縦長ドットとスキャンライン表示、デジタル8色・512色中8色・4096色中16色、ディザ・タイル・グラデーション塗り、表画面・裏画面と線画レイヤーに対応。インストール不要・オフライン動作。">
+<link rel="canonical" href="https://e-i-show.github.io/RetroPixelPaint/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Crect x='2' y='1' width='2' height='14' fill='%2300f'/%3E%3Crect x='4' y='1' width='2' height='14' fill='%23f00'/%3E%3Crect x='6' y='1' width='2' height='14' fill='%23f0f'/%3E%3Crect x='8' y='1' width='2' height='14' fill='%230f0'/%3E%3Crect x='10' y='1' width='2' height='14' fill='%230ff'/%3E%3Crect x='12' y='1' width='2' height='14' fill='%23ff0'/%3E%3Crect x='14' y='1' width='1' height='14' fill='%23fff'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Retro Pixel Paint">
+<meta property="og:title" content="Retro Pixel Paint｜PC-8801・PC-9801風ドット絵ペイント">
+<meta property="og:description" content="640×200の縦長ドットとスキャンライン、デジタル8色・512色中8色・4096色中16色。昔のパソコン風のドット絵をブラウザだけで描けるペイントツールです。">
+<meta property="og:url" content="https://e-i-show.github.io/RetroPixelPaint/">
+<meta property="og:locale" content="ja_JP">
 <style>
   :root{
     --bg:#1b1d22; --panel:#24262d; --panel2:#2a2d35; --bd:#3a3d47; --bd2:#4a4e5a;
@@ -6817,7 +6825,7 @@ function initUI(){
   document.addEventListener("gesturechange",ev=>ev.preventDefault());
 }
 function applyStaticLang(){
-  document.title="Retro Pixel Paint";
+  document.title=App.lang==="en"?"Retro Pixel Paint - PC-8801 / PC-9801 style pixel art editor":"Retro Pixel Paint｜PC-8801・PC-9801風ドット絵ペイント";
   document.documentElement.lang=App.lang;
 }
 /** 言語切替: UIを現在言語で作り直す(キャンバス内容・設定は保持) */
