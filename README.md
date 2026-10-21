@@ -1,7 +1,11 @@
-[README.md](https://github.com/user-attachments/files/32790871/README.md)
 # Retro Pixel Paint
 
-ブラウザだけで動く、レトロPC風のドット絵ペイントです。縦長ドットの8色から正方ピクセルの16色まで、昔のパソコンの画面のような絵を描けます。
+PC-8801・PC-9801・X1・FM-7 などの、昔のパソコン風のドット絵が描けるペイントツールです。ブラウザだけで動き、インストールは要りません。
+
+- **640×200 の縦長ドット**を、ダブルハイトか**スキャンライン**で当時の画面のように表示
+- **デジタル8色**（PC-8801・X1・FM-7 などの固定8色）、**512色中8色**（PC-8801mkIISR 以降のアナログ8色）、**4096色中16色**（PC-9801 などのアナログ16色）
+- 2色を混ぜた**ディザ**の中間色、**タイルパターン**、**グラデーション**で塗れる
+- 当時のCG制作のように、**表画面・裏画面**と**線画レイヤー**を使い分けて描ける
 
 ▶ **使ってみる: https://E-I-Show.github.io/RetroPixelPaint/**
 
@@ -51,11 +55,13 @@ Chrome・Edge などの最近のブラウザで動作を確認しています。
 
 E-I-Show
 
+PC-8801・PC-9801 は日本電気株式会社、X1 はシャープ株式会社、FM-7 は富士通株式会社の商標または登録商標です。このアプリは各社とは関係のない非公式のツールです。
+
 ---
 
 ## English
 
-Retro Pixel Paint is a pixel art editor that runs entirely in your browser, in the style of retro Japanese PCs.
+Retro Pixel Paint is a pixel art editor that runs entirely in your browser, in the style of retro Japanese PCs such as the NEC PC-8801 / PC-9801, Sharp X1 and Fujitsu FM-7.
 
 - 6 resolution modes (tall dots 640×200 / 640×400, square pixels 320×200 / 320×400 / 640×400 / 640×800) × 3 color modes (8 fixed colors, 8 of 512, 16 of 4096)
 - Dithered mid-colors, tile patterns and gradients
@@ -67,3 +73,5 @@ Retro Pixel Paint is a pixel art editor that runs entirely in your browser, in t
 Open the page above, or download `index.html` and open it in a modern browser (tested with Chromium-based browsers such as Chrome and Edge). See Help → Manual in the app for details.
 
 Released under the [MIT License](LICENSE). Pictures you draw with this app belong to you.
+
+PC-8801, PC-9801, X1 and FM-7 are trademarks or registered trademarks of their respective owners. This is an unofficial tool and is not affiliated with them.
