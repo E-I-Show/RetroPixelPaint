@@ -751,21 +751,29 @@ function patIsEffectivelyTransparent(p,levels){
   return false;
 }
 
-// 一筆ごとの位相: 起点を2×2の中で 02/31 の順（左上→右下→右上→左下）にずらす。縦長・正方で共通
-const STROKE_SHIFTS=[[0,0],[1,1],[1,0],[0,1]];
+// 一筆ごとの位相: 起点を2×2の中で 02/31 の順（左上→右下→右上→左下）にずらし、4筆ごとに2ドット単位で
+// 右→下→右下へずらす（縦長は右だけ）。縦長8筆・正方16筆で行列の全マスを1回ずつ起点にするので、
+// 1点だけ描く擬似透過でも塗り重ねで埋まる。25%は最初の4筆で埋まる
+const STROKE_SHIFTS_2X2=[[0,0],[1,1],[1,0],[0,1]];
+function strokeShifts(spec){
+  const out=[];
+  for(let j=0;j<spec.levels/4;j++)
+    for(const [sx,sy] of STROKE_SHIFTS_2X2)out.push([sx+2*(j&1),sy+2*(j>>1)]);
+  return out;
+}
 
 // ===== DitherEngine (DITHER表の行列で2色を混ぜる: 縦長=4x2・縦縞ハーフトーン / 正方=4x4ベイヤー) =====
 class DitherEngine{
   constructor(spec=RES[RES_DEFAULT].dither){ this.strokeStep=0; this.autoPhasePerStroke=false; this.configure(spec); }
   configure(spec){
-    this.spec=spec;
+    this.spec=spec; this.strokeShifts=strokeShifts(spec); this.strokeStep%=this.strokeShifts.length;
     // 行列の幅・高さは2のべき乗なので、1ドットごとの計算はビット演算で行う
     this._mxMask=spec.mx-1; this._mxShift=Math.log2(spec.mx); this._myMask=spec.my-1;
   }
-  beginStroke(){ if(this.autoPhasePerStroke) this.strokeStep=(this.strokeStep+1)%STROKE_SHIFTS.length; }
+  beginStroke(){ if(this.autoPhasePerStroke) this.strokeStep=(this.strokeStep+1)%this.strokeShifts.length; }
   /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦] */
   _offset(phase){
-    const t=phase%this.spec.levels, s=STROKE_SHIFTS[this.strokeStep];
+    const t=phase%this.spec.levels, s=this.strokeShifts[this.strokeStep];
     return [((t&this._mxMask)+s[0])&this._mxMask, ((t>>this._mxShift)+s[1])%this.spec.my];
   }
   resolveColor(p,x,y){
