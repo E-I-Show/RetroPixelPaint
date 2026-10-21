@@ -751,29 +751,44 @@ function patIsEffectivelyTransparent(p,levels){
   return false;
 }
 
+// 一筆ごとの位相: 起点を2×2の中で 02/31 の順（左上→右下→右上→左下）にずらし、4筆ごとに2ドット単位で
+// 右→下→右下へずらす（縦長は右だけ）。縦長8筆・正方16筆で行列の全マスを1回ずつ起点にするので、
+// 1点だけ描く擬似透過でも塗り重ねで埋まる。25%は最初の4筆で埋まる
+const STROKE_SHIFTS_2X2=[[0,0],[1,1],[1,0],[0,1]];
+function strokeShifts(spec){
+  const out=[];
+  for(let j=0;j<spec.levels/4;j++)
+    for(const [sx,sy] of STROKE_SHIFTS_2X2)out.push([sx+2*(j&1),sy+2*(j>>1)]);
+  return out;
+}
+
 // ===== DitherEngine (DITHER表の行列で2色を混ぜる: 縦長=4x2・縦縞ハーフトーン / 正方=4x4ベイヤー) =====
 class DitherEngine{
-  constructor(spec=RES[RES_DEFAULT].dither){ this.strokePhase=0; this.autoPhasePerStroke=false; this.configure(spec); }
+  constructor(spec=RES[RES_DEFAULT].dither){ this.strokeStep=0; this.autoPhasePerStroke=false; this.configure(spec); }
   configure(spec){
-    this.spec=spec; this.strokePhase%=spec.levels;
+    this.spec=spec; this.strokeShifts=strokeShifts(spec); this.strokeStep%=this.strokeShifts.length;
     // 行列の幅・高さは2のべき乗なので、1ドットごとの計算はビット演算で行う
     this._mxMask=spec.mx-1; this._mxShift=Math.log2(spec.mx); this._myMask=spec.my-1;
   }
-  beginStroke(){ if(this.autoPhasePerStroke) this.strokePhase=(this.strokePhase+1)%this.spec.levels; }
+  beginStroke(){ if(this.autoPhasePerStroke) this.strokeStep=(this.strokeStep+1)%this.strokeShifts.length; }
+  /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦] */
+  _offset(phase){
+    const t=phase%this.spec.levels, s=this.strokeShifts[this.strokeStep];
+    return [((t&this._mxMask)+s[0])&this._mxMask, ((t>>this._mxShift)+s[1])%this.spec.my];
+  }
   resolveColor(p,x,y){
     if(patIsFullyTransparent(p))return TRANSPARENT_INDEX;
     const d=this.spec, L=d.levels, r=p.ratio;
     if(r<=0)return p.c1;
     if(r>=L)return p.c2;
-    const totalPhase=(p.phase+this.strokePhase)%L;
-    const px=totalPhase&this._mxMask, py=(totalPhase>>this._mxShift)%d.my;
+    const [px,py]=this._offset(p.phase);
     const bx=(x+px)&this._mxMask, by=(y+py)&this._myMask;
     return d.matrix[by][bx]<r ? p.c2 : p.c1;
   }
   /** タイルの色: resolveColor と同じずらし方で、位相（と一筆ごとの位相）の分だけタイルをずらして読む */
   resolveTile(tile,p,x,y){
-    const t=(((p&&p.phase)||0)+this.strokePhase)%this.spec.levels;
-    return tile.resolveColor(x+(t&this._mxMask),y+((t>>this._mxShift)%this.spec.my));
+    const [px,py]=this._offset((p&&p.phase)||0);
+    return tile.resolveColor(x+px,y+py);
   }
   /** 擬似透過のパターン: opacity 0=完全透明 〜 levels=不透明 */
   static createTransparencyPattern(colorIndex,opacity,phase,levels){
@@ -826,6 +841,10 @@ class TilePattern{
 }
 
 // ===== GridPalette (16x16、四隅バイリニア) =====
+// 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
+// 色は行列の小さい値から 右下→左下→右上→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
+// 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ
+const GRID_ORDER=["BR","BL","TR","TL"];
 class GridPalette{
   constructor(spec=RES[RES_DEFAULT].dither){
     this.GRID_SIZE=16; this.spec=spec;
@@ -834,28 +853,31 @@ class GridPalette{
     this.generate();
   }
   configure(spec){ this.spec=spec; this.generate(); }
+  /** 辺の段（0〜段数）: グラデの比率。真ん中の2マスは半分 */
+  _axis(k){
+    const gs=this.GRID_SIZE, L=this.spec.levels;
+    if(k===gs/2-1||k===gs/2)return L/2;
+    return Math.round(k*L/(gs-1));
+  }
   generate(){
-    const gs=this.GRID_SIZE, maxIdx=gs-1, d=this.spec;
+    const gs=this.GRID_SIZE, d=this.spec, L=d.levels;
+    const color={TL:this.cornerTL,TR:this.cornerTR,BL:this.cornerBL,BR:this.cornerBR};
     this.cells=[];
     for(let gy=0;gy<gs;gy++){
       const row=[];
       for(let gx=0;gx<gs;gx++){
+        const fx=this._axis(gx)/L, fy=this._axis(gy)/L;
+        const w={TL:(1-fx)*(1-fy),TR:fx*(1-fy),BL:(1-fx)*fy,BR:fx*fy};
+        // 最大剰余: 切り捨てた残りを、端数の大きい角から1つずつ足す（同じ端数なら GRID_ORDER の順）
+        const n={}; let rest=L;
+        for(const k of GRID_ORDER){ n[k]=Math.floor(w[k]*L+1e-9); rest-=n[k]; }
+        const byFrac=GRID_ORDER.slice().sort((a,b)=>(w[b]*L-n[b])-(w[a]*L-n[a]));
+        for(let i=0;i<rest;i++)n[byFrac[i]]++;
+        // 行列の値 v のマスの色: 値の小さい方から GRID_ORDER の順に n 個ずつ
+        const byValue=[];
+        for(const k of GRID_ORDER)for(let i=0;i<n[k];i++)byValue.push(color[k]);
         const tile=new TilePattern(d.my,d.mx);
-        const fx=gx/maxIdx, fy=gy/maxIdx;
-        const wTL=(1-fx)*(1-fy), wTR=fx*(1-fy), wBL=(1-fx)*fy;
-        const phX=(gx*3)%d.mx, phY=(gy*3)%d.my;
-        for(let py=0;py<d.my;py++){
-          for(let px=0;px<d.mx;px++){
-            const bx=(px+phX)%d.mx, by=(py+phY)%d.my;
-            const threshold=(d.matrix[by][bx]+0.5)/d.levels;
-            let ci;
-            if(threshold<wTL)ci=this.cornerTL;
-            else if(threshold<wTL+wTR)ci=this.cornerTR;
-            else if(threshold<wTL+wTR+wBL)ci=this.cornerBL;
-            else ci=this.cornerBR;
-            tile.tile[py][px]=ci;
-          }
-        }
+        for(let py=0;py<d.my;py++)for(let px=0;px<d.mx;px++)tile.tile[py][px]=byValue[d.matrix[py][px]];
         row.push(tile);
       }
       this.cells.push(row);
