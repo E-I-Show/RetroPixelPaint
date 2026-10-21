@@ -751,29 +751,36 @@ function patIsEffectivelyTransparent(p,levels){
   return false;
 }
 
+// 一筆ごとの位相: 起点を2×2の中で 02/31 の順（左上→右下→右上→左下）にずらす。縦長・正方で共通
+const STROKE_SHIFTS=[[0,0],[1,1],[1,0],[0,1]];
+
 // ===== DitherEngine (DITHER表の行列で2色を混ぜる: 縦長=4x2・縦縞ハーフトーン / 正方=4x4ベイヤー) =====
 class DitherEngine{
-  constructor(spec=RES[RES_DEFAULT].dither){ this.strokePhase=0; this.autoPhasePerStroke=false; this.configure(spec); }
+  constructor(spec=RES[RES_DEFAULT].dither){ this.strokeStep=0; this.autoPhasePerStroke=false; this.configure(spec); }
   configure(spec){
-    this.spec=spec; this.strokePhase%=spec.levels;
+    this.spec=spec;
     // 行列の幅・高さは2のべき乗なので、1ドットごとの計算はビット演算で行う
     this._mxMask=spec.mx-1; this._mxShift=Math.log2(spec.mx); this._myMask=spec.my-1;
   }
-  beginStroke(){ if(this.autoPhasePerStroke) this.strokePhase=(this.strokePhase+1)%this.spec.levels; }
+  beginStroke(){ if(this.autoPhasePerStroke) this.strokeStep=(this.strokeStep+1)%STROKE_SHIFTS.length; }
+  /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦] */
+  _offset(phase){
+    const t=phase%this.spec.levels, s=STROKE_SHIFTS[this.strokeStep];
+    return [((t&this._mxMask)+s[0])&this._mxMask, ((t>>this._mxShift)+s[1])%this.spec.my];
+  }
   resolveColor(p,x,y){
     if(patIsFullyTransparent(p))return TRANSPARENT_INDEX;
     const d=this.spec, L=d.levels, r=p.ratio;
     if(r<=0)return p.c1;
     if(r>=L)return p.c2;
-    const totalPhase=(p.phase+this.strokePhase)%L;
-    const px=totalPhase&this._mxMask, py=(totalPhase>>this._mxShift)%d.my;
+    const [px,py]=this._offset(p.phase);
     const bx=(x+px)&this._mxMask, by=(y+py)&this._myMask;
     return d.matrix[by][bx]<r ? p.c2 : p.c1;
   }
   /** タイルの色: resolveColor と同じずらし方で、位相（と一筆ごとの位相）の分だけタイルをずらして読む */
   resolveTile(tile,p,x,y){
-    const t=(((p&&p.phase)||0)+this.strokePhase)%this.spec.levels;
-    return tile.resolveColor(x+(t&this._mxMask),y+((t>>this._mxShift)%this.spec.my));
+    const [px,py]=this._offset((p&&p.phase)||0);
+    return tile.resolveColor(x+px,y+py);
   }
   /** 擬似透過のパターン: opacity 0=完全透明 〜 levels=不透明 */
   static createTransparencyPattern(colorIndex,opacity,phase,levels){
