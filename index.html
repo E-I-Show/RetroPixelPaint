@@ -841,6 +841,10 @@ class TilePattern{
 }
 
 // ===== GridPalette (16x16、四隅バイリニア) =====
+// 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
+// 色は行列の小さい値から 右下→右上→左下→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
+// 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ
+const GRID_ORDER=["BR","TR","BL","TL"];
 class GridPalette{
   constructor(spec=RES[RES_DEFAULT].dither){
     this.GRID_SIZE=16; this.spec=spec;
@@ -849,28 +853,31 @@ class GridPalette{
     this.generate();
   }
   configure(spec){ this.spec=spec; this.generate(); }
+  /** 辺の段（0〜段数）: グラデの比率。真ん中の2マスは半分 */
+  _axis(k){
+    const gs=this.GRID_SIZE, L=this.spec.levels;
+    if(k===gs/2-1||k===gs/2)return L/2;
+    return Math.round(k*L/(gs-1));
+  }
   generate(){
-    const gs=this.GRID_SIZE, maxIdx=gs-1, d=this.spec;
+    const gs=this.GRID_SIZE, d=this.spec, L=d.levels;
+    const color={TL:this.cornerTL,TR:this.cornerTR,BL:this.cornerBL,BR:this.cornerBR};
     this.cells=[];
     for(let gy=0;gy<gs;gy++){
       const row=[];
       for(let gx=0;gx<gs;gx++){
+        const fx=this._axis(gx)/L, fy=this._axis(gy)/L;
+        const w={TL:(1-fx)*(1-fy),TR:fx*(1-fy),BL:(1-fx)*fy,BR:fx*fy};
+        // 最大剰余: 切り捨てた残りを、端数の大きい角から1つずつ足す（同じ端数なら GRID_ORDER の順）
+        const n={}; let rest=L;
+        for(const k of GRID_ORDER){ n[k]=Math.floor(w[k]*L+1e-9); rest-=n[k]; }
+        const byFrac=GRID_ORDER.slice().sort((a,b)=>(w[b]*L-n[b])-(w[a]*L-n[a]));
+        for(let i=0;i<rest;i++)n[byFrac[i]]++;
+        // 行列の値 v のマスの色: 値の小さい方から GRID_ORDER の順に n 個ずつ
+        const byValue=[];
+        for(const k of GRID_ORDER)for(let i=0;i<n[k];i++)byValue.push(color[k]);
         const tile=new TilePattern(d.my,d.mx);
-        const fx=gx/maxIdx, fy=gy/maxIdx;
-        const wTL=(1-fx)*(1-fy), wTR=fx*(1-fy), wBL=(1-fx)*fy;
-        const phX=(gx*3)%d.mx, phY=(gy*3)%d.my;
-        for(let py=0;py<d.my;py++){
-          for(let px=0;px<d.mx;px++){
-            const bx=(px+phX)%d.mx, by=(py+phY)%d.my;
-            const threshold=(d.matrix[by][bx]+0.5)/d.levels;
-            let ci;
-            if(threshold<wTL)ci=this.cornerTL;
-            else if(threshold<wTL+wTR)ci=this.cornerTR;
-            else if(threshold<wTL+wTR+wBL)ci=this.cornerBL;
-            else ci=this.cornerBR;
-            tile.tile[py][px]=ci;
-          }
-        }
+        for(let py=0;py<d.my;py++)for(let px=0;px<d.mx;px++)tile.tile[py][px]=byValue[d.matrix[py][px]];
         row.push(tile);
       }
       this.cells.push(row);
