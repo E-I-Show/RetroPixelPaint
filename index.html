@@ -1153,6 +1153,8 @@ class DrawingEngine{
     // Xキー・ペンの消しゴム側で、描画色がパターン（タイル）のとき: そのパターンの透明でない所だけを消す（位相も描くときと同じ）
     const mk=pattern.eraseMask;
     if(mk&&(mk.tile?this.dither.resolveTile(mk.tile,mk.pat,x,y):this.dither.resolveColor(mk.pat,x,y))===TRANSPARENT_INDEX)return;
+    // 描画色がタイルで擬似透過のとき: 擬似透過の透明な所には描かない
+    if(pattern.transMask&&this.dither.resolveColor(pattern.transMask,x,y)===TRANSPARENT_INDEX)return;
     const curIdx=this.pixels[y*w+x];
     if(curIdx>=0&&curIdx<this.colors.count&&this.colorMask[curIdx])return;
     let colorIdx;
@@ -1209,9 +1211,13 @@ class DrawingEngine{
       useTile=false;
     }
     if(this.pressure.pseudoTransparency>0&&!patIsFullyTransparent(pat)){
-      const baseColor=(pat.ratio<=L/2)?pat.c1:pat.c2;
-      pat=DitherEngine.createTransparencyPattern(baseColor,L-this.pressure.pseudoTransparency,pat.phase,L);
-      useTile=false;
+      if(useTile){
+        // 描画色がタイル: タイルの色のまま、擬似透過で透明になる所だけ描かない（位相はタイルと同じ）
+        pat={...pat,transMask:DitherEngine.createTransparencyPattern(0,L-this.pressure.pseudoTransparency,pat.phase,L)};
+      }else{
+        const baseColor=(pat.ratio<=L/2)?pat.c1:pat.c2;
+        pat=DitherEngine.createTransparencyPattern(baseColor,L-this.pressure.pseudoTransparency,pat.phase,L);
+      }
     }
     this.useTileForDrawing=useTile;
     return pat;
