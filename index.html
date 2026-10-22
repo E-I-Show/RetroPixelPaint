@@ -771,9 +771,9 @@ class DitherEngine{
     this._mxMask=spec.mx-1; this._mxShift=Math.log2(spec.mx); this._myMask=spec.my-1;
   }
   beginStroke(){ if(this.autoPhasePerStroke) this.strokeStep=(this.strokeStep+1)%this.strokeShifts.length; }
-  /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦] */
-  _offset(phase){
-    const t=phase%this.spec.levels, s=this.strokeShifts[this.strokeStep];
+  /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦]。withStroke=false なら一筆ごとのずれを足さない */
+  _offset(phase,withStroke=true){
+    const t=phase%this.spec.levels, s=withStroke?this.strokeShifts[this.strokeStep]:[0,0];
     return [((t&this._mxMask)+s[0])&this._mxMask, ((t>>this._mxShift)+s[1])%this.spec.my];
   }
   resolveColor(p,x,y){
@@ -785,9 +785,10 @@ class DitherEngine{
     const bx=(x+px)&this._mxMask, by=(y+py)&this._myMask;
     return d.matrix[by][bx]<r ? p.c2 : p.c1;
   }
-  /** タイルの色: resolveColor と同じずらし方で、位相（と一筆ごとの位相）の分だけタイルをずらして読む */
-  resolveTile(tile,p,x,y){
-    const [px,py]=this._offset((p&&p.phase)||0);
+  /** タイルの色: resolveColor と同じずらし方で、位相（と一筆ごとの位相）の分だけタイルをずらして読む。
+      withStroke=false なら設定の位相だけでずらす（擬似透過のタイル: 透過の模様だけが一筆ごとにずれ、重ねるとタイルが完成する） */
+  resolveTile(tile,p,x,y,withStroke=true){
+    const [px,py]=this._offset((p&&p.phase)||0,withStroke);
     return tile.resolveColor(x+px,y+py);
   }
   /** 擬似透過のパターン: opacity 0=完全透明 〜 levels=不透明 */
@@ -1153,11 +1154,13 @@ class DrawingEngine{
     // Xキー・ペンの消しゴム側で、描画色がパターン（タイル）のとき: そのパターンの透明でない所だけを消す（位相も描くときと同じ）
     const mk=pattern.eraseMask;
     if(mk&&(mk.tile?this.dither.resolveTile(mk.tile,mk.pat,x,y):this.dither.resolveColor(mk.pat,x,y))===TRANSPARENT_INDEX)return;
+    // 描画色がタイルで擬似透過のとき: 擬似透過の透明な所には描かない
+    if(pattern.transMask&&this.dither.resolveColor(pattern.transMask,x,y)===TRANSPARENT_INDEX)return;
     const curIdx=this.pixels[y*w+x];
     if(curIdx>=0&&curIdx<this.colors.count&&this.colorMask[curIdx])return;
     let colorIdx;
     if(this.useTileForDrawing&&this.currentTile!==null){
-      colorIdx=this.dither.resolveTile(this.currentTile,pattern,x,y);
+      colorIdx=this.dither.resolveTile(this.currentTile,pattern,x,y,!pattern.transMask);
     }else{
       colorIdx=this.dither.resolveColor(pattern,x,y);
     }
@@ -1209,9 +1212,13 @@ class DrawingEngine{
       useTile=false;
     }
     if(this.pressure.pseudoTransparency>0&&!patIsFullyTransparent(pat)){
-      const baseColor=(pat.ratio<=L/2)?pat.c1:pat.c2;
-      pat=DitherEngine.createTransparencyPattern(baseColor,L-this.pressure.pseudoTransparency,pat.phase,L);
-      useTile=false;
+      if(useTile){
+        // 描画色がタイル: タイルの色のまま、擬似透過で透明になる所だけ描かない（位相はタイルと同じ）
+        pat={...pat,transMask:DitherEngine.createTransparencyPattern(0,L-this.pressure.pseudoTransparency,pat.phase,L)};
+      }else{
+        const baseColor=(pat.ratio<=L/2)?pat.c1:pat.c2;
+        pat=DitherEngine.createTransparencyPattern(baseColor,L-this.pressure.pseudoTransparency,pat.phase,L);
+      }
     }
     this.useTileForDrawing=useTile;
     return pat;
