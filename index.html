@@ -771,9 +771,9 @@ class DitherEngine{
     this._mxMask=spec.mx-1; this._mxShift=Math.log2(spec.mx); this._myMask=spec.my-1;
   }
   beginStroke(){ if(this.autoPhasePerStroke) this.strokeStep=(this.strokeStep+1)%this.strokeShifts.length; }
-  /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦] */
-  _offset(phase){
-    const t=phase%this.spec.levels, s=this.strokeShifts[this.strokeStep];
+  /** 位相（と一筆ごとのずれ）から、行列を読む位置のずれ [横,縦]。withStroke=false なら一筆ごとのずれを足さない */
+  _offset(phase,withStroke=true){
+    const t=phase%this.spec.levels, s=withStroke?this.strokeShifts[this.strokeStep]:[0,0];
     return [((t&this._mxMask)+s[0])&this._mxMask, ((t>>this._mxShift)+s[1])%this.spec.my];
   }
   resolveColor(p,x,y){
@@ -785,9 +785,10 @@ class DitherEngine{
     const bx=(x+px)&this._mxMask, by=(y+py)&this._myMask;
     return d.matrix[by][bx]<r ? p.c2 : p.c1;
   }
-  /** タイルの色: resolveColor と同じずらし方で、位相（と一筆ごとの位相）の分だけタイルをずらして読む */
-  resolveTile(tile,p,x,y){
-    const [px,py]=this._offset((p&&p.phase)||0);
+  /** タイルの色: resolveColor と同じずらし方で、位相（と一筆ごとの位相）の分だけタイルをずらして読む。
+      withStroke=false なら設定の位相だけでずらす（擬似透過のタイル: 透過の模様だけが一筆ごとにずれ、重ねるとタイルが完成する） */
+  resolveTile(tile,p,x,y,withStroke=true){
+    const [px,py]=this._offset((p&&p.phase)||0,withStroke);
     return tile.resolveColor(x+px,y+py);
   }
   /** 擬似透過のパターン: opacity 0=完全透明 〜 levels=不透明 */
@@ -1159,7 +1160,7 @@ class DrawingEngine{
     if(curIdx>=0&&curIdx<this.colors.count&&this.colorMask[curIdx])return;
     let colorIdx;
     if(this.useTileForDrawing&&this.currentTile!==null){
-      colorIdx=this.dither.resolveTile(this.currentTile,pattern,x,y);
+      colorIdx=this.dither.resolveTile(this.currentTile,pattern,x,y,!pattern.transMask);
     }else{
       colorIdx=this.dither.resolveColor(pattern,x,y);
     }
