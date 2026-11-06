@@ -855,10 +855,10 @@ class TilePattern{
 }
 
 // ===== GridPalette (16x16、四隅バイリニア) =====
-// モード1（2色ずつ混ぜる）: 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
+// モード1（設定色のディザ合成）: 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
 // 色は行列の小さい値から 右下→左下→右上→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
 // 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ。
-// モード2（フルカラーで補間）: 四隅の色を線形RGBで補間した色を、パレットの最大4色の混色で表す（mixPlan）。
+// モード2（内部フルカラーの変換）: 四隅の色を線形RGBで補間した色を、パレットの最大4色の混色で表す（mixPlan）。
 // 辺の段はモード1と同じ。マスクした色は使わない
 const GRID_ORDER=["BR","BL","TR","TL"];
 const GridMode={Blend:1,FullColor:2};
@@ -1975,8 +1975,8 @@ const JA2EN={
 "グラデ":"Gradient",
 "グリッド":"Grid",
 "混ぜ方":"Mixing",
-"2色ずつ混ぜる":"Blend 2 colors",
-"フルカラーで補間":"Full-color blend",
+"設定色のディザ合成":"Dither the set colors",
+"内部フルカラーの変換":"Convert from full color",
 "タイル":"Tile",
 "ストップの色":"Stop color",
 "左クリック=読込 / 右クリック=保存（タッチは長押しで登録）":"L-click=Load / R-click=Save (touch: long-press to store)",
@@ -3995,8 +3995,8 @@ const UI={
     };
     R.cvsGrid=el("canvas",{class:"pix",width:"208",height:"208",style:"width:208px;height:208px;cursor:pointer;"});
     R.selGridMode=el("select",{class:"sel","aria-label":t("混ぜ方")},
-      el("option",{value:String(GridMode.Blend),text:t("2色ずつ混ぜる")}),
-      el("option",{value:String(GridMode.FullColor),text:t("フルカラーで補間")}));
+      el("option",{value:String(GridMode.Blend),text:t("設定色のディザ合成")}),
+      el("option",{value:String(GridMode.FullColor),text:t("内部フルカラーの変換")}));
     R.selGridMode.addEventListener("change",()=>{
       gridPalette.mode=parseInt(R.selGridMode.value,10)===GridMode.FullColor?GridMode.FullColor:GridMode.Blend;
       gridPalette.generate();
@@ -6623,7 +6623,7 @@ return `
 <h3>パターンのパネル</h3>
 <ul>
 <li><b>グラデ</b>: 2〜4色の間を、縦長ドットは9段、正方ピクセルは17段のディザでつなぎます。色のボタンで各色（透明も選べます）を決め、帯を押すと、その段の混ぜ方が描画色になります。</li>
-<li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。「混ぜ方」の「2色ずつ混ぜる」は四隅の色だけで混ぜ、四辺は両端の2色のグラデと同じ模様になります。「フルカラーで補間」は四隅の色をフルカラーで混ぜた色を、パレットの色（マスクした色は除く）の組み合わせで作ります。たとえば赤と緑の間には黄が使われます。</li>
+<li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。「混ぜ方」の「設定色のディザ合成」は四隅の色だけで混ぜ、四辺は両端の2色のグラデと同じ模様になります。「内部フルカラーの変換」は四隅の色をフルカラーで混ぜた色を、パレットの色（マスクした色は除く）の組み合わせで作ります。たとえば赤と緑の間には黄が使われます。</li>
 <li><b>タイル</b>: 64個の保存欄です。クリックで読み込み、右クリックで今のタイルを保存します（タッチは長押し）。セット保存・セット読込（.tls）・全消去があります。縦長ドット用（4×2）と正方ピクセル用（4×4）は別々に保存されます。</li>
 <li>下の欄の<b>位相</b>で、ディザとタイルの模様をずらせます。<b>一筆ごとにずらす</b>をONにすると、一筆ごとに位相が1つ進みます。</li>
 </ul>
@@ -6833,7 +6833,7 @@ and each has a <b>normal layer</b> and a <b>line layer</b>.</p>
 <h3>Pattern panel</h3>
 <ul>
 <li><b>Gradient</b>: joins 2 to 4 colors with dithers of 9 steps (tall dots) or 17 steps (square pixels). Set each color with its button (transparent is allowed) and click the bar to make that step the drawing color.</li>
-<li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it. With Mixing set to <b>Blend 2 colors</b>, only the corner colors are used and each edge matches the two-color gradient of its ends. <b>Full-color blend</b> mixes the corner colors in full color and builds each tile from the palette colors (masked colors are left out); for example, yellow appears between red and green.</li>
+<li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it. With Mixing set to <b>Dither the set colors</b>, only the corner colors are used and each edge matches the two-color gradient of its ends. <b>Convert from full color</b> mixes the corner colors in full color and builds each tile from the palette colors (masked colors are left out); for example, yellow appears between red and green.</li>
 <li><b>Tile</b>: 64 slots. Click to load and right-click to store the current tile (long-press on touch). Save Set, Load Set (.tls) and Clear All are available. Tall-dot (4×2) and square-pixel (4×4) tiles are kept separately.</li>
 <li><b>Phase</b> at the bottom shifts the dither and tile patterns. With <b>Shift per stroke</b> on, the phase advances by one with every stroke.</li>
 </ul>
