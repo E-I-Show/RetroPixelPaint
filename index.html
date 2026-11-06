@@ -568,6 +568,7 @@ SOFTWARE.
   .about{min-width:280px; max-width:440px; line-height:1.8;}
   .about-sub{color:var(--muted); font-size:11px;}
   .about-note{color:var(--muted); font-size:11px;}
+  .about-note a{color:var(--accent); word-break:break-all;}
   .about-logo{display:grid; grid-template-columns:repeat(8,14px); height:auto;}
   .manual td:first-child{white-space:normal; min-width:8em;}
   .manual a{color:var(--accent);}
@@ -1593,6 +1594,7 @@ const JA2EN={
 "閉じる":"Close",
 "開く...":"Open...",
 "（ブラウザ版）":" (Browser Edition)",
+"説明・ソースコード（GitHub）: ":"About & source code (GitHub): ",
 "＋拡大":"Zoom +",
 "－縮小":"Zoom -",
 "ツール":"Tools",
@@ -6816,6 +6818,7 @@ function showManual(){
   Modal.open(t("リファレンスマニュアル"),body,[{label:t("閉じる"),value:true}]);
 }
 
+const REPO_URL="https://github.com/E-I-Show/RetroPixelPaint";
 function showAbout(){
   const body=el("div",{class:"about"});
   // 色の見本: 8色デジタル（上の段）と、16色アナログの9〜16番目の既定の色（下の段）
@@ -6828,6 +6831,8 @@ function showAbout(){
     el("div",{text:t("解像度モード6種類（縦長ドット2・正方ピクセル4）× カラーモード3種類（8色デジタル・8色アナログ・16色アナログ）")}),
     el("div",{class:"about-note",text:t("デスクトップ版（VB.NET）の8色版・16色版とファイルをやり取りできます（.rp8・.rpp・.pal・.tls）。")}),
     el("div",{class:"about-note",text:t("ネットワークには接続しません。設定はこのブラウザに保存されます。")}),
+    el("div",{class:"about-note"},t("説明・ソースコード（GitHub）: "),
+      el("a",{href:REPO_URL,target:"_blank",rel:"noopener",text:REPO_URL.replace("https://","")})),
     el("div",{class:"about-note about-legal",text:"© 2026 E-I-Show"+(App.lang==="en"?" · ":"　")+t("MIT ライセンス")}),
     el("div",{class:"about-note",text:t("このアプリで描いた絵の権利は、描いた人のものです。")}));
   Modal.open(t("このアプリについて"),body,[{label:"OK",value:true}]);
