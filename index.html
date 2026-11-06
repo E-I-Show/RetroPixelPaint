@@ -738,6 +738,18 @@ class ColorEngine{
   }
 }
 
+// --- 色差（OKLab）: 人の見え方に近い色差。混ぜた色は光の強さ（線形のRGB）で平均する ---
+function srgbToLinear(v){ v/=255; return v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); }
+function oklabOfLinear(r,g,b){
+  const l=Math.cbrt(0.4122214708*r+0.5363325363*g+0.0514459929*b);
+  const m=Math.cbrt(0.2119034982*r+0.6806995451*g+0.1073969566*b);
+  const s=Math.cbrt(0.0883024619*r+0.2817188376*g+0.6299787005*b);
+  return [0.2104542553*l+0.7936177850*m-0.0040720468*s,
+          1.9779984951*l-2.4285922050*m+0.4505937099*s,
+          0.0259040371*l+0.7827717662*m-0.8086757660*s];
+}
+function oklabOf(c){ return oklabOfLinear(srgbToLinear(c[0]),srgbToLinear(c[1]),srgbToLinear(c[2])); }
+function labDist2(a,b){ const d0=a[0]-b[0], d1=a[1]-b[1], d2=a[2]-b[2]; return d0*d0+d1*d1+d2*d2; }
 // ===== DitherPattern (構造体相当: 常に新オブジェクトを生成) =====
 function Pat(c1,c2,ratio,phase){ return {c1,c2,ratio,phase}; }
 function PatSolid(i){ return Pat(i,i,0,0); }
@@ -843,15 +855,81 @@ class TilePattern{
 }
 
 // ===== GridPalette (16x16、四隅バイリニア) =====
-// 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
+// モード1（2色ずつ混ぜる）: 各マスの4色の数は、四隅の重みを行列のマス数（縦長8・正方16）に最大剰余で割り振る。
 // 色は行列の小さい値から 右下→左下→右上→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
-// 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ
+// 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ。
+// モード2（フルカラーで補間）: 四隅の色を線形RGBで補間した色を、パレットの最大4色の混色で表す（mixPlan）。
+// 辺の段はモード1と同じ。マスクした色は使わない
 const GRID_ORDER=["BR","BL","TR","TL"];
+const GridMode={Blend:1,FullColor:2};
+/** 目標の色 t（線形RGB）を、パレットの最大4色の混ぜ方で表す。返り値は [{i:色番号, w:割合}]。
+    混ぜた色（線形RGBの平均）が t に最も近い組のうち、コスト Σw×（色と t の距離²＋色味(OKLabのa・b)の差²）が最小の組を選ぶ。
+    遠い色や色味の違う色を混ぜるほどコストが上がるので、灰色は黒と白、赤と緑の間は黄と黒のように、近い色だけで混ぜる */
+function mixPlan(linPal,labPal,use,t){
+  const tl=oklabOfLinear(t[0],t[1],t[2]);
+  const cost=[];
+  for(const i of use){
+    const p=linPal[i], q=labPal[i];
+    const d0=p[0]-t[0], d1=p[1]-t[1], d2=p[2]-t[2], a=q[1]-tl[1], b=q[2]-tl[2];
+    cost[i]=d0*d0+d1*d1+d2*d2+a*a+b*b;
+  }
+  let best=null, bestRes=Infinity, bestCost=Infinity;
+  const n=use.length, S=[];
+  const tryS=()=>{
+    const w=affineWeights(S.map(i=>linPal[i]),t);
+    if(!w)return;
+    let r0=-t[0], r1=-t[1], r2=-t[2], c=0;
+    for(let k=0;k<S.length;k++){ const p=linPal[S[k]]; r0+=w[k]*p[0]; r1+=w[k]*p[1]; r2+=w[k]*p[2]; c+=w[k]*cost[S[k]]; }
+    const res=r0*r0+r1*r1+r2*r2;
+    if(res<bestRes-1e-9||(res<bestRes+1e-9&&c<bestCost-1e-12)){
+      bestRes=Math.min(bestRes,res); bestCost=c; best=S.map((i,k)=>({i,w:w[k]}));
+    }
+  };
+  const rec=(start)=>{
+    if(S.length>0)tryS();
+    if(S.length===4)return;
+    for(let j=start;j<n;j++){ S.push(use[j]); rec(j+1); S.pop(); }
+  };
+  rec(0);
+  return best;
+}
+/** Σw=1 の重みで P の点を混ぜて t に最も近づける（最小二乗）。重みが負になる・解けないときは null */
+function affineWeights(P,t){
+  const k=P.length;
+  if(k===1)return [1];
+  const m=k-1, pk=P[m], A=[], M=[], v=[];
+  for(let i=0;i<m;i++)A.push([P[i][0]-pk[0],P[i][1]-pk[1],P[i][2]-pk[2]]);
+  const b=[t[0]-pk[0],t[1]-pk[1],t[2]-pk[2]];
+  for(let i=0;i<m;i++){
+    M.push(A.map(aj=>A[i][0]*aj[0]+A[i][1]*aj[1]+A[i][2]*aj[2]));
+    v.push(A[i][0]*b[0]+A[i][1]*b[1]+A[i][2]*b[2]);
+  }
+  // ガウスの消去法（部分ピボット）
+  for(let c=0;c<m;c++){
+    let piv=c;
+    for(let r=c+1;r<m;r++)if(Math.abs(M[r][c])>Math.abs(M[piv][c]))piv=r;
+    if(Math.abs(M[piv][c])<1e-12)return null;
+    [M[c],M[piv]]=[M[piv],M[c]]; [v[c],v[piv]]=[v[piv],v[c]];
+    for(let r=0;r<m;r++){
+      if(r===c)continue;
+      const f=M[r][c]/M[c][c];
+      for(let cc=c;cc<m;cc++)M[r][cc]-=f*M[c][cc];
+      v[r]-=f*v[c];
+    }
+  }
+  const w=[]; let sum=0;
+  for(let i=0;i<m;i++){ const x=v[i]/M[i][i]; if(x<-1e-9)return null; w.push(x); sum+=x; }
+  if(1-sum<-1e-9)return null;
+  w.push(1-sum);
+  return w;
+}
 class GridPalette{
   constructor(spec=RES[RES_DEFAULT].dither){
     this.GRID_SIZE=16; this.spec=spec;
     this.cornerTL=0; this.cornerTR=7; this.cornerBL=4; this.cornerBR=2;
-    this.cells=[];
+    this.mode=GridMode.Blend;
+    this.source=null;   // モード2で使うパレット: {colors: ColorEngine, mask: 色ごとのマスク}
+    this.cells=[]; this._key="";
     this.generate();
   }
   configure(spec){ this.spec=spec; this.generate(); }
@@ -861,7 +939,24 @@ class GridPalette{
     if(k===gs/2-1||k===gs/2)return L/2;
     return Math.round(k*L/(gs-1));
   }
+  _fullColor(){ return this.mode===GridMode.FullColor&&this.source; }
+  /** 作り直しが要るかを見分ける値（モード2はパレットとマスクも見る） */
+  _makeKey(){
+    let k=this.mode+"|"+this.spec.key+"|"+[this.cornerTL,this.cornerTR,this.cornerBL,this.cornerBR].join(",");
+    if(this._fullColor()){
+      const c=this.source.colors;
+      k+="|"+c.palette.slice(0,c.count).join(";")+"|"+(this.source.mask||[]).slice(0,c.count).map(Number).join("");
+    }
+    return k;
+  }
+  /** パレットやマスクが変わっていたら作り直す（モード2用。表示する前に呼ぶ） */
+  refresh(){ if(this._makeKey()!==this._key)this.generate(); }
   generate(){
+    this._key=this._makeKey();
+    if(this._fullColor())this._generateFullColor();
+    else this._generateBlend();
+  }
+  _generateBlend(){
     const gs=this.GRID_SIZE, d=this.spec, L=d.levels;
     const color={TL:this.cornerTL,TR:this.cornerTR,BL:this.cornerBL,BR:this.cornerBR};
     this.cells=[];
@@ -878,9 +973,57 @@ class GridPalette{
         // 行列の値 v のマスの色: 値の小さい方から GRID_ORDER の順に n 個ずつ
         const byValue=[];
         for(const k of GRID_ORDER)for(let i=0;i<n[k];i++)byValue.push(color[k]);
-        const tile=new TilePattern(d.my,d.mx);
-        for(let py=0;py<d.my;py++)for(let px=0;px<d.mx;px++)tile.tile[py][px]=byValue[d.matrix[py][px]];
-        row.push(tile);
+        row.push(this._tileOf(byValue));
+      }
+      this.cells.push(row);
+    }
+  }
+  _tileOf(byValue){
+    const d=this.spec, tile=new TilePattern(d.my,d.mx);
+    for(let py=0;py<d.my;py++)for(let px=0;px<d.mx;px++)tile.tile[py][px]=byValue[d.matrix[py][px]];
+    return tile;
+  }
+  /** モード2: 四隅の色を線形RGBで補間し、パレットの最大4色の混色にする。
+      透明の角は、その重みの分だけ透明のマスにする（行列の大きい値の側）。色は暗い順に行列の小さい値から置く */
+  _generateFullColor(){
+    const gs=this.GRID_SIZE, d=this.spec, L=d.levels, c=this.source.colors, mask=this.source.mask, cnt=c.count;
+    const linPal=c.palette.slice(0,cnt).map(p=>[srgbToLinear(p[0]),srgbToLinear(p[1]),srgbToLinear(p[2])]);
+    const labPal=linPal.map(p=>oklabOfLinear(p[0],p[1],p[2]));
+    let use=[]; for(let i=0;i<cnt;i++)if(!(mask&&mask[i]))use.push(i);
+    if(use.length===0)for(let i=0;i<cnt;i++)use.push(i);   // 全部マスクしたときは全部の色を使う
+    const corners=[this.cornerTL,this.cornerTR,this.cornerBL,this.cornerBR];
+    const memo=new Map();
+    this.cells=[];
+    for(let gy=0;gy<gs;gy++){
+      const row=[];
+      for(let gx=0;gx<gs;gx++){
+        const fx=this._axis(gx)/L, fy=this._axis(gy)/L, key=fx+","+fy;
+        if(!memo.has(key)){
+          const wc=[(1-fx)*(1-fy),fx*(1-fy),(1-fx)*fy,fx*fy];
+          let wT=0; const t=[0,0,0];
+          for(let k=0;k<4;k++){
+            const ci=corners[k];
+            if(ci<0||ci>=cnt){ wT+=wc[k]; continue; }
+            for(let ch=0;ch<3;ch++)t[ch]+=wc[k]*linPal[ci][ch];
+          }
+          const parts=[];
+          if(wT<1-1e-9){
+            for(let ch=0;ch<3;ch++)t[ch]/=(1-wT);
+            for(const e of mixPlan(linPal,labPal,use,t))parts.push({i:e.i,w:e.w*(1-wT)});
+          }
+          if(wT>1e-9)parts.push({i:TRANSPARENT_INDEX,w:wT});
+          // 最大剰余で行列のマス数に割り振る
+          const n=parts.map(e=>Math.floor(e.w*L+1e-9)); let rest=L-n.reduce((a,b)=>a+b,0);
+          const order=parts.map((e,k)=>k).sort((a,b)=>(parts[b].w*L-n[b])-(parts[a].w*L-n[a]));
+          for(let r=0;r<rest;r++)n[order[r]]++;
+          // 暗い色から行列の小さい値へ。透明は最後
+          const lum=i=>i<0?Infinity:labPal[i][0];
+          const idx=parts.map((e,k)=>k).sort((a,b)=>lum(parts[a].i)-lum(parts[b].i)||parts[a].i-parts[b].i);
+          const byValue=[];
+          for(const k of idx)for(let r=0;r<n[k];r++)byValue.push(parts[k].i);
+          memo.set(key,byValue);
+        }
+        row.push(this._tileOf(memo.get(key)));
       }
       this.cells.push(row);
     }
@@ -1481,6 +1624,7 @@ const colors=new ColorEngine();
 const engine=new DrawingEngine(colors);
 const gradPalette=new GradientPalette();
 const gridPalette=new GridPalette();
+gridPalette.source={colors,get mask(){ return engine.colorMask; }};   // モード2: パレットとマスクを見る
 /** 位相・擬似透過の上限（ディザの段数-1。縦長7・正方15） */
 function levelMax(){ return engine.dither.spec.levels-1; }
 
@@ -1830,6 +1974,9 @@ const JA2EN={
 "マスク切替モード":"Mask toggle mode",
 "グラデ":"Gradient",
 "グリッド":"Grid",
+"混ぜ方":"Mixing",
+"2色ずつ混ぜる":"Blend 2 colors",
+"フルカラーで補間":"Full-color blend",
 "タイル":"Tile",
 "ストップの色":"Stop color",
 "左クリック=読込 / 右クリック=保存（タッチは長押しで登録）":"L-click=Load / R-click=Save (touch: long-press to store)",
@@ -3847,7 +3994,16 @@ const UI={
       return sw;
     };
     R.cvsGrid=el("canvas",{class:"pix",width:"208",height:"208",style:"width:208px;height:208px;cursor:pointer;"});
+    R.selGridMode=el("select",{class:"sel","aria-label":t("混ぜ方")},
+      el("option",{value:String(GridMode.Blend),text:t("2色ずつ混ぜる")}),
+      el("option",{value:String(GridMode.FullColor),text:t("フルカラーで補間")}));
+    R.selGridMode.addEventListener("change",()=>{
+      gridPalette.mode=parseInt(R.selGridMode.value,10)===GridMode.FullColor?GridMode.FullColor:GridMode.Blend;
+      gridPalette.generate();
+      UI.updatePaletteDisplay(); markSettings();
+    });
     R.cvsGrid.addEventListener("click",ev=>{
+      gridPalette.refresh();
       const pt=canvasPoint(R.cvsGrid,ev);
       const gx=clamp(Math.floor(pt.x*16/208),0,15);
       const gy=clamp(Math.floor(pt.y*16/208),0,15);
@@ -3859,7 +4015,8 @@ const UI={
       patternChanged();
       UI.updatePaletteDisplay();
     });
-    gr.append(el("div",{class:"corners"},el("span",{},mkCorner(0,"左上"),t("左上")),el("span",{},t("右上"),mkCorner(1,"右上"))),
+    gr.append(el("div",{class:"gradhead"},el("span",{class:"ob-lbl",text:t("混ぜ方")}),R.selGridMode),
+      el("div",{class:"corners"},el("span",{},mkCorner(0,"左上"),t("左上")),el("span",{},t("右上"),mkCorner(1,"右上"))),
       R.cvsGrid,
       el("div",{class:"corners"},el("span",{},mkCorner(2,"左下"),t("左下")),el("span",{},t("右下"),mkCorner(3,"右下"))));
     // タイル保存
@@ -4496,6 +4653,7 @@ const UI={
 
   paintGrid(){
     const R=this.refs;
+    gridPalette.refresh();   // モード2はパレットやマスクが変わったら作り直す
     const ctx=R.cvsGrid.getContext("2d");
     const w=208,h=208,gs=16;
     const img=ctx.createImageData(w,h);
@@ -4649,6 +4807,7 @@ const UI={
     }
     const corners=[gridPalette.cornerTL,gridPalette.cornerTR,gridPalette.cornerBL,gridPalette.cornerBR];
     for(let i=0;i<4;i++)setSwatchColor(R.cornerEls[i],corners[i]);
+    R.selGridMode.value=String(gridPalette.mode);
     this.updateLineColorDisplay();
     this.syncOptionBar();
   },
@@ -5114,18 +5273,6 @@ function parseRp8(ab){
   return {magic,w,h,dot,palMode,palette,pix,line,lineColor};
 }
 
-// --- 色差（OKLab）: 人の見え方に近い色差。混ぜた色は光の強さ（線形のRGB）で平均する ---
-function srgbToLinear(v){ v/=255; return v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4); }
-function oklabOfLinear(r,g,b){
-  const l=Math.cbrt(0.4122214708*r+0.5363325363*g+0.0514459929*b);
-  const m=Math.cbrt(0.2119034982*r+0.6806995451*g+0.1073969566*b);
-  const s=Math.cbrt(0.0883024619*r+0.2817188376*g+0.6299787005*b);
-  return [0.2104542553*l+0.7936177850*m-0.0040720468*s,
-          1.9779984951*l-2.4285922050*m+0.4505937099*s,
-          0.0259040371*l+0.7827717662*m-0.8086757660*s];
-}
-function oklabOf(c){ return oklabOfLinear(srgbToLinear(c[0]),srgbToLinear(c[1]),srgbToLinear(c[2])); }
-function labDist2(a,b){ const d0=a[0]-b[0], d1=a[1]-b[1], d2=a[2]-b[2]; return d0*d0+d1*d1+d2*d2; }
 /** いちばん近い色の番号（OKLab）。同じ近さなら小さい番号 */
 function nearestIndexLab(lab,palLab){
   let best=0, bd=Infinity;
@@ -6476,7 +6623,7 @@ return `
 <h3>パターンのパネル</h3>
 <ul>
 <li><b>グラデ</b>: 2〜4色の間を、縦長ドットは9段、正方ピクセルは17段のディザでつなぎます。色のボタンで各色（透明も選べます）を決め、帯を押すと、その段の混ぜ方が描画色になります。</li>
-<li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。</li>
+<li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。「混ぜ方」の「2色ずつ混ぜる」は四隅の色だけで混ぜ、四辺は両端の2色のグラデと同じ模様になります。「フルカラーで補間」は四隅の色をフルカラーで混ぜた色を、パレットの色（マスクした色は除く）の組み合わせで作ります。たとえば赤と緑の間には黄が使われます。</li>
 <li><b>タイル</b>: 64個の保存欄です。クリックで読み込み、右クリックで今のタイルを保存します（タッチは長押し）。セット保存・セット読込（.tls）・全消去があります。縦長ドット用（4×2）と正方ピクセル用（4×4）は別々に保存されます。</li>
 <li>下の欄の<b>位相</b>で、ディザとタイルの模様をずらせます。<b>一筆ごとにずらす</b>をONにすると、一筆ごとに位相が1つ進みます。</li>
 </ul>
@@ -6686,7 +6833,7 @@ and each has a <b>normal layer</b> and a <b>line layer</b>.</p>
 <h3>Pattern panel</h3>
 <ul>
 <li><b>Gradient</b>: joins 2 to 4 colors with dithers of 9 steps (tall dots) or 17 steps (square pixels). Set each color with its button (transparent is allowed) and click the bar to make that step the drawing color.</li>
-<li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it.</li>
+<li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it. With Mixing set to <b>Blend 2 colors</b>, only the corner colors are used and each edge matches the two-color gradient of its ends. <b>Full-color blend</b> mixes the corner colors in full color and builds each tile from the palette colors (masked colors are left out); for example, yellow appears between red and green.</li>
 <li><b>Tile</b>: 64 slots. Click to load and right-click to store the current tile (long-press on touch). Save Set, Load Set (.tls) and Clear All are available. Tall-dot (4×2) and square-pixel (4×4) tiles are kept separately.</li>
 <li><b>Phase</b> at the bottom shifts the dither and tile patterns. With <b>Shift per stroke</b> on, the phase advances by one with every stroke.</li>
 </ul>
@@ -6998,7 +7145,7 @@ function saveSettings(){
       lineVisible:[engine.screens[0].lineVisible,engine.screens[1].lineVisible],
       lineFillBound:engine.lineLayerFillBoundary, lineOnlyBound:engine.lineLayerOnlyBoundary,
       shapeFill:App.shapeFill, lastShape:App.lastShape, lastFill:App.lastFill,
-      panels:App.panels, patternTab:App.patternTab, sheetTab:App.sheetTab,
+      panels:App.panels, patternTab:App.patternTab, sheetTab:App.sheetTab, gridMode:gridPalette.mode,
       baseColor:App.baseColor,   // 通常レイヤーを隠したときの下地の色（通常レイヤーの表示そのものは保存しない）
     };
     // 色数ごと: 今の色数の背景色は今の背景色、もう一方は最後に使った番号
@@ -7084,6 +7231,7 @@ function applySettings({common:o,c8,c16,tall,square}){
     for(const k of ["color","pattern","layer","nav"])if(typeof o.panels[k]==="boolean")App.panels[k]=o.panels[k];
   }
   if(o.patternTab==="grad"||o.patternTab==="grid"||o.patternTab==="tile")App.patternTab=o.patternTab;
+  if(o.gridMode===GridMode.Blend||o.gridMode===GridMode.FullColor)gridPalette.mode=o.gridMode;
   if(o.sheetTab==="color"||o.sheetTab==="pattern"||o.sheetTab==="layer")App.sheetTab=o.sheetTab;
   if(typeof o.showGrid==="boolean")App.showGrid=o.showGrid;
   if(typeof o.zoomSnapInteger==="boolean")App.zoomSnapInteger=o.zoomSnapInteger;
