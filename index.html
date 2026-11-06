@@ -859,7 +859,7 @@ class TilePattern{
 // 色は行列の小さい値から 右下→左下→右上→左上 の順に置くので、四辺はグラデ（後ろの色が小さい値）の模様と同じになる。
 // 辺の段は round(k/15×段数)、真ん中の2マス(7・8)だけ半分にそろえて、中心では4色が同じ数ずつ均等に並ぶ。
 // モード2（内部フルカラーの変換）: 四隅の色を線形RGBで補間した色を、パレットの最大4色の混色で表す（mixPlan）。
-// 辺の段はモード1と同じ。マスクした色は使わない
+// 辺の段はモード1と同じ。excludeMasked ならマスクした色は使わない
 const GRID_ORDER=["BR","BL","TR","TL"];
 const GridMode={Blend:1,FullColor:2};
 /** 目標の色 t（線形RGB）を、パレットの最大4色の混ぜ方で表す。返り値は [{i:色番号, w:割合}]。
@@ -929,6 +929,7 @@ class GridPalette{
     this.cornerTL=0; this.cornerTR=7; this.cornerBL=4; this.cornerBR=2;
     this.mode=GridMode.Blend;
     this.source=null;   // モード2で使うパレット: {colors: ColorEngine, mask: 色ごとのマスク}
+    this.excludeMasked=true;   // モード2: マスクした色を使わない
     this.cells=[]; this._key="";
     this.generate();
   }
@@ -945,7 +946,7 @@ class GridPalette{
     let k=this.mode+"|"+this.spec.key+"|"+[this.cornerTL,this.cornerTR,this.cornerBL,this.cornerBR].join(",");
     if(this._fullColor()){
       const c=this.source.colors;
-      k+="|"+c.palette.slice(0,c.count).join(";")+"|"+(this.source.mask||[]).slice(0,c.count).map(Number).join("");
+      k+="|"+c.palette.slice(0,c.count).join(";")+"|"+(this.excludeMasked?(this.source.mask||[]).slice(0,c.count).map(Number).join(""):"-");
     }
     return k;
   }
@@ -989,7 +990,7 @@ class GridPalette{
     const gs=this.GRID_SIZE, d=this.spec, L=d.levels, c=this.source.colors, mask=this.source.mask, cnt=c.count;
     const linPal=c.palette.slice(0,cnt).map(p=>[srgbToLinear(p[0]),srgbToLinear(p[1]),srgbToLinear(p[2])]);
     const labPal=linPal.map(p=>oklabOfLinear(p[0],p[1],p[2]));
-    let use=[]; for(let i=0;i<cnt;i++)if(!(mask&&mask[i]))use.push(i);
+    let use=[]; for(let i=0;i<cnt;i++)if(!(this.excludeMasked&&mask&&mask[i]))use.push(i);
     if(use.length===0)for(let i=0;i<cnt;i++)use.push(i);   // 全部マスクしたときは全部の色を使う
     const corners=[this.cornerTL,this.cornerTR,this.cornerBL,this.cornerBR];
     const memo=new Map();
@@ -1977,6 +1978,7 @@ const JA2EN={
 "混ぜ方":"Mixing",
 "設定色のディザ合成":"Dither the set colors",
 "内部フルカラーの変換":"Convert from full color",
+"マスク色を除外":"Exclude masked colors",
 "タイル":"Tile",
 "ストップの色":"Stop color",
 "左クリック=読込 / 右クリック=保存（タッチは長押しで登録）":"L-click=Load / R-click=Save (touch: long-press to store)",
@@ -3997,6 +3999,12 @@ const UI={
     R.selGridMode=el("select",{class:"sel","aria-label":t("混ぜ方")},
       el("option",{value:String(GridMode.Blend),text:t("設定色のディザ合成")}),
       el("option",{value:String(GridMode.FullColor),text:t("内部フルカラーの変換")}));
+    R.chkGridMask=el("input",{type:"checkbox"});
+    R.chkGridMask.addEventListener("change",()=>{
+      gridPalette.excludeMasked=R.chkGridMask.checked;
+      gridPalette.generate();
+      UI.updatePaletteDisplay(); markSettings();
+    });
     R.selGridMode.addEventListener("change",()=>{
       gridPalette.mode=parseInt(R.selGridMode.value,10)===GridMode.FullColor?GridMode.FullColor:GridMode.Blend;
       gridPalette.generate();
@@ -4016,6 +4024,7 @@ const UI={
       UI.updatePaletteDisplay();
     });
     gr.append(el("div",{class:"gradhead"},el("span",{class:"ob-lbl",text:t("混ぜ方")}),R.selGridMode),
+      el("div",{class:"gradhead"},R.gridMaskLbl=el("label",{class:"chk"},R.chkGridMask,t("マスク色を除外"))),
       el("div",{class:"corners"},el("span",{},mkCorner(0,"左上"),t("左上")),el("span",{},t("右上"),mkCorner(1,"右上"))),
       R.cvsGrid,
       el("div",{class:"corners"},el("span",{},mkCorner(2,"左下"),t("左下")),el("span",{},t("右下"),mkCorner(3,"右下"))));
@@ -4808,6 +4817,9 @@ const UI={
     const corners=[gridPalette.cornerTL,gridPalette.cornerTR,gridPalette.cornerBL,gridPalette.cornerBR];
     for(let i=0;i<4;i++)setSwatchColor(R.cornerEls[i],corners[i]);
     R.selGridMode.value=String(gridPalette.mode);
+    R.chkGridMask.checked=gridPalette.excludeMasked;
+    R.chkGridMask.disabled=gridPalette.mode!==GridMode.FullColor;   // 内部フルカラーの変換のときだけ
+    R.gridMaskLbl.classList.toggle("dis",R.chkGridMask.disabled);
     this.updateLineColorDisplay();
     this.syncOptionBar();
   },
@@ -6623,7 +6635,7 @@ return `
 <h3>パターンのパネル</h3>
 <ul>
 <li><b>グラデ</b>: 2〜4色の間を、縦長ドットは9段、正方ピクセルは17段のディザでつなぎます。色のボタンで各色（透明も選べます）を決め、帯を押すと、その段の混ぜ方が描画色になります。</li>
-<li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。「混ぜ方」の「設定色のディザ合成」は四隅の色だけで混ぜ、四辺は両端の2色のグラデと同じ模様になります。「内部フルカラーの変換」は四隅の色をフルカラーで混ぜた色を、パレットの色（マスクした色は除く）の組み合わせで作ります。たとえば赤と緑の間には黄が使われます。</li>
+<li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。「混ぜ方」の「設定色のディザ合成」は四隅の色だけで混ぜ、四辺は両端の2色のグラデと同じ模様になります。「内部フルカラーの変換」は四隅の色をフルカラーで混ぜた色を、パレットの色の組み合わせで作ります。たとえば赤と緑の間には黄が使われます。「マスク色を除外」をONにすると、マスクした色を使いません。</li>
 <li><b>タイル</b>: 64個の保存欄です。クリックで読み込み、右クリックで今のタイルを保存します（タッチは長押し）。セット保存・セット読込（.tls）・全消去があります。縦長ドット用（4×2）と正方ピクセル用（4×4）は別々に保存されます。</li>
 <li>下の欄の<b>位相</b>で、ディザとタイルの模様をずらせます。<b>一筆ごとにずらす</b>をONにすると、一筆ごとに位相が1つ進みます。</li>
 </ul>
@@ -6833,7 +6845,7 @@ and each has a <b>normal layer</b> and a <b>line layer</b>.</p>
 <h3>Pattern panel</h3>
 <ul>
 <li><b>Gradient</b>: joins 2 to 4 colors with dithers of 9 steps (tall dots) or 17 steps (square pixels). Set each color with its button (transparent is allowed) and click the bar to make that step the drawing color.</li>
-<li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it. With Mixing set to <b>Dither the set colors</b>, only the corner colors are used and each edge matches the two-color gradient of its ends. <b>Convert from full color</b> mixes the corner colors in full color and builds each tile from the palette colors (masked colors are left out); for example, yellow appears between red and green.</li>
+<li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it. With Mixing set to <b>Dither the set colors</b>, only the corner colors are used and each edge matches the two-color gradient of its ends. <b>Convert from full color</b> mixes the corner colors in full color and builds each tile from the palette colors; for example, yellow appears between red and green. With <b>Exclude masked colors</b> on, masked colors are not used.</li>
 <li><b>Tile</b>: 64 slots. Click to load and right-click to store the current tile (long-press on touch). Save Set, Load Set (.tls) and Clear All are available. Tall-dot (4×2) and square-pixel (4×4) tiles are kept separately.</li>
 <li><b>Phase</b> at the bottom shifts the dither and tile patterns. With <b>Shift per stroke</b> on, the phase advances by one with every stroke.</li>
 </ul>
@@ -7145,7 +7157,7 @@ function saveSettings(){
       lineVisible:[engine.screens[0].lineVisible,engine.screens[1].lineVisible],
       lineFillBound:engine.lineLayerFillBoundary, lineOnlyBound:engine.lineLayerOnlyBoundary,
       shapeFill:App.shapeFill, lastShape:App.lastShape, lastFill:App.lastFill,
-      panels:App.panels, patternTab:App.patternTab, sheetTab:App.sheetTab, gridMode:gridPalette.mode,
+      panels:App.panels, patternTab:App.patternTab, sheetTab:App.sheetTab, gridMode:gridPalette.mode, gridExcludeMasked:gridPalette.excludeMasked,
       baseColor:App.baseColor,   // 通常レイヤーを隠したときの下地の色（通常レイヤーの表示そのものは保存しない）
     };
     // 色数ごと: 今の色数の背景色は今の背景色、もう一方は最後に使った番号
@@ -7232,6 +7244,7 @@ function applySettings({common:o,c8,c16,tall,square}){
   }
   if(o.patternTab==="grad"||o.patternTab==="grid"||o.patternTab==="tile")App.patternTab=o.patternTab;
   if(o.gridMode===GridMode.Blend||o.gridMode===GridMode.FullColor)gridPalette.mode=o.gridMode;
+  if(typeof o.gridExcludeMasked==="boolean")gridPalette.excludeMasked=o.gridExcludeMasked;
   if(o.sheetTab==="color"||o.sheetTab==="pattern"||o.sheetTab==="layer")App.sheetTab=o.sheetTab;
   if(typeof o.showGrid==="boolean")App.showGrid=o.showGrid;
   if(typeof o.zoomSnapInteger==="boolean")App.zoomSnapInteger=o.zoomSnapInteger;
