@@ -204,6 +204,9 @@ SOFTWARE.
   .maskbtn{width:34px; height:28px;}
   .maskbtn[aria-pressed="true"]{background:var(--sel); border-color:var(--accent); color:var(--accent);}
   .tabs{display:flex; gap:2px; padding:6px 8px 0; border-bottom:1px solid var(--bd);}
+  .tab[hidden]{display:none;}
+  .tab{white-space:nowrap;}
+  .patwrap .tab{padding:0 9px;}   /* パターンはタブが4つ（グリッド2）なので詰める */
   .tab{height:26px; padding:0 12px; background:transparent; color:var(--muted); border:1px solid transparent;
     border-radius:4px 4px 0 0; font-size:11.5px; cursor:pointer;}
   .tab[aria-selected="true"]{background:var(--panel2); color:var(--fg); border-color:var(--bd);
@@ -211,6 +214,7 @@ SOFTWARE.
   .tabbody{display:none; flex-direction:column; align-items:center; gap:8px; padding:10px; background:var(--panel2);}
   .tabbody.show{display:flex;}
   .gradhead{width:208px; display:flex; align-items:center; gap:8px;}
+  .g2-note{color:var(--muted); font-size:11px;}
   .stopbtn{width:22px; height:22px; padding:0; border:1px solid var(--bd2); cursor:pointer; flex:none;}
   .stopbtn.unused{background:transparent !important; border:1px dashed var(--bd2); cursor:default;}
   .corners{width:208px; display:flex; justify-content:space-between; align-items:center;}
@@ -583,6 +587,7 @@ SOFTWARE.
   @media (max-width:820px){
     /* パターンのタブ・グラデの色・グリッドの四隅は、見た目の大きさ（シートの中の並び）は変えずに、押せる範囲だけを広げる */
     .tab{position:relative; padding:0 16px; font-size:13px;}
+    .patwrap .tab{padding:0 12px;}
     .tab::after{content:""; position:absolute; left:0; right:0; top:-7px; bottom:-7px;}
     .stopbtn,.cornerbtn{position:relative;}
     .stopbtn::after{content:""; position:absolute; inset:-4px;}
@@ -1029,6 +1034,29 @@ class GridPalette{
       this.cells.push(row);
     }
   }
+}
+
+// ===== グリッド2（8色・縦長ドット専用）: R・G・B を7段の固定パターンで重ねる =====
+// 各色の段 0〜6 は 0・1/16・1/8・1/4・1/2・3/4・1。3色とも同じ模様を同じ位置に重ね、
+// ドットの色番号は 青1＋赤2＋緑4（デジタル8色の並び。8色アナログでも同じ番号の色になる）。
+// 1/16 の段だけ 8×4 で繰り返すので、それを含むタイルは 8×4、ほかは 4×2
+const RGB_LEVELS=[
+  ["0000","0000"],
+  ["00000000","00010000","00000000","00000001"],
+  ["0000","0001"],
+  ["0100","0001"],
+  ["1010","0101"],
+  ["1101","0111"],
+  ["1111","1111"],
+];
+const RGB_LEVEL_COUNT=RGB_LEVELS.length;
+function rgbLevelBit(lv,x,y){ const p=RGB_LEVELS[lv], row=p[y%p.length]; return row.charCodeAt(x%row.length)===49?1:0; }
+/** 赤・緑・青の段（0〜6）から作るタイル */
+function rgbGridTile(r,g,b){
+  const big=(r===1||g===1||b===1), rows=big?4:2, cols=big?8:4, t=new TilePattern(rows,cols);
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)
+    t.tile[y][x]=rgbLevelBit(b,x,y)|(rgbLevelBit(r,x,y)<<1)|(rgbLevelBit(g,x,y)<<2);
+  return t;
 }
 
 // ===== PressureManager (Pointer Events筆圧) =====
@@ -1975,6 +2003,10 @@ const JA2EN={
 "マスク切替モード":"Mask toggle mode",
 "グラデ":"Gradient",
 "グリッド":"Grid",
+"グリッド2":"Grid 2",
+"縦は青、横は赤。下の帯で緑を選びます":"Rows: blue, columns: red. Pick green on the bar below.",
+"緑":"Green",
+"8×4のタイルはタイル保存欄に登録できません":"8×4 tiles can't be stored in the tile slots",
 "混ぜ方":"Mixing",
 "設定色のディザ合成":"Dither the set colors",
 "内部フルカラーの変換":"Convert from full color",
@@ -2043,6 +2075,7 @@ const App={
   // タイル保存欄は縦長ドット用（4×2）と正方ピクセル用（4×4）を別々に持つ。storedTiles は今の解像度モードの方を指す
   tileStores:{tall4x2:new Array(64).fill(null),bayer4:new Array(64).fill(null)},
   lastTiles:{tall4x2:null,bayer4:null},   // 直前のタイル（形ごと。今の形の分は lastTile）
+  grid2G:0, grid2Pick:null,   // グリッド2: 選んでいる緑の段、選んだタイル {r,g,b,tile}
   transByKind:{tall4x2:0,bayer4:0},       // 擬似透過の値（形ごと。縦長0〜7・正方0〜15。今の形の分は engine.pressure）
   storedTiles:null,
   drawFromOther:false,             // もう一方の画面から描く（保存しない）
@@ -3942,7 +3975,7 @@ const UI={
     const wrap=el("div",{class:"patwrap"});
     const tabs=el("div",{class:"tabs",role:"tablist"});
     R.patTabs={}; R.patBodies={};
-    for(const [k,label] of [["grad","グラデ"],["grid","グリッド"],["tile","タイル"]]){
+    for(const [k,label] of [["grad","グラデ"],["grid","グリッド"],["grid2","グリッド2"],["tile","タイル"]]){
       const b=el("button",{class:"tab",role:"tab","aria-selected":"false",onclick:()=>UI.selectPatternTab(k)},t(label));
       R.patTabs[k]=b; tabs.append(b);
     }
@@ -4028,6 +4061,31 @@ const UI={
       el("div",{class:"corners"},el("span",{},mkCorner(0,"左上"),t("左上")),el("span",{},t("右上"),mkCorner(1,"右上"))),
       R.cvsGrid,
       el("div",{class:"corners"},el("span",{},mkCorner(2,"左下"),t("左下")),el("span",{},t("右下"),mkCorner(3,"右下"))));
+    // グリッド2（8色・縦長ドットのときだけ）: 縦=青・横=赤の7×7、下の帯で緑の段を選ぶ
+    const g2=el("div",{class:"tabbody"});
+    const G2=29;   // 1マスの大きさ（すき間2px込み）
+    R.cvsGrid2=el("canvas",{class:"pix",width:String(G2*7),height:String(G2*7),style:`width:${G2*7}px;height:${G2*7}px;cursor:pointer;`});
+    R.cvsGrid2Bar=el("canvas",{class:"pix",width:String(G2*7),height:String(G2+8),style:`width:${G2*7}px;height:${G2+8}px;cursor:pointer;`,
+      "aria-label":t("緑")});
+    R.cvsGrid2.addEventListener("click",ev=>{
+      const pt=canvasPoint(R.cvsGrid2,ev);
+      const r=clamp(Math.floor(pt.x/G2),0,6), b=clamp(Math.floor(pt.y/G2),0,6), g=App.grid2G;
+      const tile=rgbGridTile(r,g,b);
+      App.grid2Pick={r,g,b,tile};
+      App.lastTile=tile;
+      App.isTileActive=true;
+      engine.currentTile=tile;
+      pressureGradientDisabled();
+      App.selectedPattern=Pat(0,0,0,UI.phaseValue());
+      patternChanged();
+      UI.updatePaletteDisplay();
+    });
+    R.cvsGrid2Bar.addEventListener("click",ev=>{
+      const pt=canvasPoint(R.cvsGrid2Bar,ev);
+      App.grid2G=clamp(Math.floor(pt.x/G2),0,6);
+      UI.paintGrid2(); markSettings();
+    });
+    g2.append(R.cvsGrid2,R.cvsGrid2Bar,el("div",{class:"g2-note",text:t("縦は青、横は赤。下の帯で緑を選びます")}));
     // タイル保存
     const tl=el("div",{class:"tabbody"});
     R.cvsTileStore=el("canvas",{class:"pix",width:"208",height:"208",style:"width:208px;height:208px;cursor:pointer;",
@@ -4047,6 +4105,7 @@ const UI={
     const tileLongPress=async(idx)=>{
       if(App.storedTiles[idx]===null){
         if(App.lastTile!==null){
+          if(!tileFitsStore(App.lastTile)){ toast(t("8×4のタイルはタイル保存欄に登録できません")); return; }
           if(navigator.vibrate){try{navigator.vibrate(25);}catch(e){}}
           App.storedTiles[idx]=App.lastTile.clone();
           UI.paintTileStore(); markSettings();
@@ -4056,7 +4115,7 @@ const UI={
       if(navigator.vibrate){try{navigator.vibrate(25);}catch(e){}}
       const body=el("div",{text:t("この枠には登録済みのタイルがあります。")});
       const btns=[];
-      if(App.lastTile!==null)btns.push({label:t("置き換え"),value:"replace"});
+      if(App.lastTile!==null&&tileFitsStore(App.lastTile))btns.push({label:t("置き換え"),value:"replace"});
       btns.push({label:t("削除"),value:"delete"},{label:t("キャンセル"),value:null});
       const r=await Modal.open(t("タイル保存"),body,btns);
       if(r==="replace"&&App.lastTile!==null){
@@ -4082,6 +4141,7 @@ const UI={
       }
       if(ev.button===2){
         if(App.lastTile!==null){
+          if(!tileFitsStore(App.lastTile)){ toast(t("8×4のタイルはタイル保存欄に登録できません")); return; }
           App.storedTiles[idx]=App.lastTile.clone();
           UI.paintTileStore(); markSettings();
         }
@@ -4105,7 +4165,7 @@ const UI={
         App.storedTiles.fill(null);
         UI.paintTileStore(); markSettings();
       }})));
-    R.patBodies.grad=g; R.patBodies.grid=gr; R.patBodies.tile=tl;
+    R.patBodies.grad=g; R.patBodies.grid=gr; R.patBodies.grid2=g2; R.patBodies.tile=tl;
     // 下の欄（グラデ・グリッド・タイルのどのタブでも同じものが見える）: 位相・一筆ごとにずらす。
     // スマホはその右に、選択中のパターン（タイル）を整数倍に拡大して、タブの中身の下の空き部分いっぱいに見せる
     R.selPhase=el("select",{class:"sel mono","aria-label":t("位相")});
@@ -4126,7 +4186,7 @@ const UI={
         el("div",{class:"pf-phase"},el("span",{class:"ob-lbl",text:t("位相")}),R.selPhase),
         el("label",{class:"chk"},R.chkAutoPhase,t("一筆ごとにずらす"))),
       R.loupeBox);
-    wrap.append(g,gr,tl,R.patFoot);
+    wrap.append(g,gr,g2,tl,R.patFoot);
     // 大きさが変わったら（タブの切替・シートのタブ切替・画面の回転）描き直す。描き直しは次のフレームで
     // （ResizeObserver の中で説明の文字やキャンバスの大きさを変えると、ループのエラーになることがある）
     if(typeof ResizeObserver!=="undefined"){
@@ -4142,12 +4202,13 @@ const UI={
   },
   selectPatternTab(k,quiet){
     const R=this.refs;
+    if(k==="grid2"&&!grid2Available())k="grid";
     App.patternTab=k;
     for(const key in R.patTabs){
       R.patTabs[key].setAttribute("aria-selected",String(key===k));
       R.patBodies[key].classList.toggle("show",key===k);
     }
-    if(R.sumPattern)R.sumPattern.textContent=t({grad:"グラデ",grid:"グリッド",tile:"タイル"}[k]);
+    if(R.sumPattern)R.sumPattern.textContent=t({grad:"グラデ",grid:"グリッド",grid2:"グリッド2",tile:"タイル"}[k]);
     if(!quiet)markSettings();
   },
   /** 位相の選択の値（0〜段数-1） */
@@ -4660,6 +4721,39 @@ const UI={
     ctx.putImageData(img,0,0);
   },
 
+  /** グリッド2: 7×7（縦=青・横=赤）と緑の帯。1ドットを横2×縦4ピクセルで描く（縦長ドットの見た目） */
+  paintGrid2(){
+    const R=this.refs;
+    if(!R.cvsGrid2||!grid2Available())return;
+    const G2=29, inner=G2-2, pal=UI.pal32();
+    const drawCell=(b32,w,x0,y0,tile)=>{
+      for(let py=0;py<inner;py++)for(let px=0;px<inner;px++){
+        const ci=tile.resolveColor(px>>1,py>>2);
+        b32[(y0+py)*w+x0+px]=(ci>=0&&ci<pal.length)?pal[ci]:UI.TRANS_GRAY32;
+      }
+    };
+    const pk=App.grid2Pick, picked=pk&&engine.currentTile===pk.tile&&App.isTileActive;
+    {
+      const cv=R.cvsGrid2, w=cv.width, h=cv.height, ctx=cv.getContext("2d");
+      const img=ctx.createImageData(w,h), b32=new Uint32Array(img.data.buffer);
+      for(let b=0;b<7;b++)for(let r=0;r<7;r++)drawCell(b32,w,r*G2+1,b*G2+1,rgbGridTile(r,App.grid2G,b));
+      ctx.putImageData(img,0,0);
+      if(picked&&pk.g===App.grid2G){
+        ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue("--accent")||"#4fd1ff"; ctx.lineWidth=2;
+        ctx.strokeRect(pk.r*G2+1,pk.b*G2+1,inner,inner);
+      }
+    }
+    {
+      const cv=R.cvsGrid2Bar, w=cv.width, h=cv.height, ctx=cv.getContext("2d");
+      const img=ctx.createImageData(w,h), b32=new Uint32Array(img.data.buffer);
+      for(let g=0;g<7;g++)drawCell(b32,w,g*G2+1,1,rgbGridTile(0,g,0));
+      ctx.putImageData(img,0,0);
+      // 選んでいる緑の段に印（下の三角）
+      const cx=App.grid2G*G2+G2/2;
+      ctx.fillStyle="#e33"; ctx.beginPath(); ctx.moveTo(cx,G2); ctx.lineTo(cx-6,h); ctx.lineTo(cx+6,h); ctx.closePath(); ctx.fill();
+    }
+  },
+
   paintGrid(){
     const R=this.refs;
     gridPalette.refresh();   // モード2はパレットやマスクが変わったら作り直す
@@ -4782,6 +4876,10 @@ const UI={
       for(let i=0;i<L;i++)R.selPhase.append(el("option",{value:String(i),text:String(i)}));
       R.selPhase.value=String(v);
     }
+    // グリッド2は8色・縦長ドットのときだけ。隠すときに選んでいたらグリッドへ
+    const g2ok=grid2Available();
+    R.patTabs.grid2.hidden=!g2ok;
+    if(!g2ok&&App.patternTab==="grid2")this.selectPatternTab("grid",true);
     this.buildOptionBar();
     this.syncFromEngine();
     this.updatePaletteDisplay();
@@ -4805,6 +4903,7 @@ const UI={
     this.paintGradBar();
     if(R.ob&&R.ob.gradCv)this.paintGradBar(R.ob.gradCv);
     this.paintGrid();
+    this.paintGrid2();
     this.paintTileStore();
     this.paintPatLoupe();
     R.selGradStops.value=String(gradPalette.stopCount);
@@ -4900,6 +4999,10 @@ function colorModeMenu(anchor){
 // パターン/タイル変更のエンジン反映
 function patternChanged(){ engine.currentPattern={...App.selectedPattern}; }
 /** タイルの色番号がすべて今の色数の中にあるか */
+/** グリッド2が使えるか: 8色・縦長ドット */
+function grid2Available(){ return colors.count===8&&engine.aspectY===2; }
+/** 今のタイル保存欄に入る大きさか（グリッド2の 8×4 のタイルは入らない） */
+function tileFitsStore(t){ const d=engine.dither.spec; return !!t&&t.rows===d.my&&t.cols===d.mx; }
 function tileUsable(t){ return t.tile.every(r=>r.every(c=>c>=TRANSPARENT_INDEX&&c<colors.count)); }
 function pressureGradientDisabled(){
   engine.pressure.pressureGradient=false;
@@ -6636,6 +6739,7 @@ return `
 <ul>
 <li><b>グラデ</b>: 2〜4色の間を、縦長ドットは9段、正方ピクセルは17段のディザでつなぎます。色のボタンで各色（透明も選べます）を決め、帯を押すと、その段の混ぜ方が描画色になります。</li>
 <li><b>グリッド</b>: 四隅の色から、混ぜ方の違うタイルを16×16個並べます。押したタイルで描けます。「混ぜ方」の「設定色のディザ合成」は四隅の色だけで混ぜ、四辺は両端の2色のグラデと同じ模様になります。「内部フルカラーの変換」は四隅の色をフルカラーで混ぜた色を、パレットの色の組み合わせで作ります。たとえば赤と緑の間には黄が使われます。「マスク色を除外」をONにすると、マスクした色を使いません。</li>
+<li><b>グリッド2</b>（8色・縦長ドットのとき）: 赤・緑・青をそれぞれ7段（0・1/16・1/8・1/4・1/2・3/4・1）の決まった模様で重ねたタイルです。縦が青、横が赤で、下の帯で緑の段を選びます。1/16の段を含むタイルは8×4で、タイル保存欄には登録できません。</li>
 <li><b>タイル</b>: 64個の保存欄です。クリックで読み込み、右クリックで今のタイルを保存します（タッチは長押し）。セット保存・セット読込（.tls）・全消去があります。縦長ドット用（4×2）と正方ピクセル用（4×4）は別々に保存されます。</li>
 <li>下の欄の<b>位相</b>で、ディザとタイルの模様をずらせます。<b>一筆ごとにずらす</b>をONにすると、一筆ごとに位相が1つ進みます。</li>
 </ul>
@@ -6846,6 +6950,7 @@ and each has a <b>normal layer</b> and a <b>line layer</b>.</p>
 <ul>
 <li><b>Gradient</b>: joins 2 to 4 colors with dithers of 9 steps (tall dots) or 17 steps (square pixels). Set each color with its button (transparent is allowed) and click the bar to make that step the drawing color.</li>
 <li><b>Grid</b>: from the four corner colors, 16×16 tiles with different mixes are laid out. Click a tile to draw with it. With Mixing set to <b>Dither the set colors</b>, only the corner colors are used and each edge matches the two-color gradient of its ends. <b>Convert from full color</b> mixes the corner colors in full color and builds each tile from the palette colors; for example, yellow appears between red and green. With <b>Exclude masked colors</b> on, masked colors are not used.</li>
+<li><b>Grid 2</b> (8 colors, tall dots): tiles that overlay red, green and blue, each in seven fixed patterns (0, 1/16, 1/8, 1/4, 1/2, 3/4, 1). Rows are blue and columns are red; pick the green level on the bar below. Tiles with a 1/16 level are 8×4 and can't be stored in the tile slots.</li>
 <li><b>Tile</b>: 64 slots. Click to load and right-click to store the current tile (long-press on touch). Save Set, Load Set (.tls) and Clear All are available. Tall-dot (4×2) and square-pixel (4×4) tiles are kept separately.</li>
 <li><b>Phase</b> at the bottom shifts the dither and tile patterns. With <b>Shift per stroke</b> on, the phase advances by one with every stroke.</li>
 </ul>
@@ -7157,7 +7262,7 @@ function saveSettings(){
       lineVisible:[engine.screens[0].lineVisible,engine.screens[1].lineVisible],
       lineFillBound:engine.lineLayerFillBoundary, lineOnlyBound:engine.lineLayerOnlyBoundary,
       shapeFill:App.shapeFill, lastShape:App.lastShape, lastFill:App.lastFill,
-      panels:App.panels, patternTab:App.patternTab, sheetTab:App.sheetTab, gridMode:gridPalette.mode, gridExcludeMasked:gridPalette.excludeMasked,
+      panels:App.panels, patternTab:App.patternTab, sheetTab:App.sheetTab, gridMode:gridPalette.mode, gridExcludeMasked:gridPalette.excludeMasked, grid2G:App.grid2G,
       baseColor:App.baseColor,   // 通常レイヤーを隠したときの下地の色（通常レイヤーの表示そのものは保存しない）
     };
     // 色数ごと: 今の色数の背景色は今の背景色、もう一方は最後に使った番号
@@ -7242,7 +7347,8 @@ function applySettings({common:o,c8,c16,tall,square}){
   if(o.panels&&typeof o.panels==="object"){
     for(const k of ["color","pattern","layer","nav"])if(typeof o.panels[k]==="boolean")App.panels[k]=o.panels[k];
   }
-  if(o.patternTab==="grad"||o.patternTab==="grid"||o.patternTab==="tile")App.patternTab=o.patternTab;
+  if(o.patternTab==="grad"||o.patternTab==="grid"||o.patternTab==="grid2"||o.patternTab==="tile")App.patternTab=o.patternTab;
+  if(Number.isInteger(o.grid2G)&&o.grid2G>=0&&o.grid2G<RGB_LEVEL_COUNT)App.grid2G=o.grid2G;
   if(o.gridMode===GridMode.Blend||o.gridMode===GridMode.FullColor)gridPalette.mode=o.gridMode;
   if(typeof o.gridExcludeMasked==="boolean")gridPalette.excludeMasked=o.gridExcludeMasked;
   if(o.sheetTab==="color"||o.sheetTab==="pattern"||o.sheetTab==="layer")App.sheetTab=o.sheetTab;
